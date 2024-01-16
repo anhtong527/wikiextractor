@@ -573,7 +573,7 @@ def main():
     parser = argparse.ArgumentParser(prog=os.path.basename(sys.argv[0]),
                                      formatter_class=argparse.RawDescriptionHelpFormatter,
                                      description=__doc__)
-    parser.add_argument("--input", default="/home/pphuc/wikiextractor/test.xml",
+    parser.add_argument("--input", default="/home/anhtong/vts_llm/wikiextractor/test.xml",
                         help="XML wiki dump file")
     groupO = parser.add_argument_group('Output')
     groupO.add_argument("-o", "--output", default="text",
