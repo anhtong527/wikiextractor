@@ -57,13 +57,13 @@ import argparse
 import bz2
 import logging
 import os.path
-import re  # TODO use regex when it will be standard
+import re
 import sys
 from io import StringIO
 from multiprocessing import Queue, get_context, cpu_count
 from timeit import default_timer
 
-from .extract import Extractor, ignoreTag, define_template, acceptedNamespaces
+from extract import Extractor, ignoreTag, define_template, acceptedNamespaces
 
 # ===========================================================================
 
@@ -185,9 +185,32 @@ class OutputSplitter():
 
 # ----------------------------------------------------------------------
 # READER
+# Regular Expression to match HTML/XML-like tags and their content.
+# This regex can capture:
+# 1. Content before the tag (if exists)
+# 2. The tag name
+# 3. Content after the tag (if exists) up to another tag or end of string
+# 4. The next tag (if exists)
 
-tagRE = re.compile(r'(.*?)<(/?\w+)[^>]*>(?:([^<]*)(<.*?>)?)?')
-#                    1     2               3      4
+# Example:
+# "Text before <tag>Text inside</tag>" will have the output as
+    # Before Tag: Text before 
+    # Tag Name: tag
+    # After Tag: Text inside
+    # Next Tag: </tag>
+
+tagRE = re.compile(
+    r"""
+    (?P<before_tag>.*?)           # Content before the tag
+    <                             # Opening bracket of a tag
+    (?P<tag_name>/?\w+)           # The tag name (with optional / for closing tags)
+    [^>]*>                        # Any other characters till closing bracket
+    (?:                           # Non-capturing group for content after the tag
+        (?P<after_tag>[^<]*)      # Content after the tag (till another tag or end of string)
+        (?P<next_tag><.*?>)?      # The next tag (if exists)
+    )?
+    """, re.VERBOSE)
+
 
 
 def load_templates(file, output_file=None):
@@ -298,27 +321,39 @@ def collect_pages(text):
         m = tagRE.search(line)
         if not m:
             continue
-        tag = m.group(2)
+        tag = m.group('tag_name')
         if tag == 'page':
             page = []
             redirect = False
         elif tag == 'id' and not id:
-            id = m.group(3)
+            id = m.group('after_tag')
         elif tag == 'id' and id: # <revision> <id></id> </revision>
-            revid = m.group(3)
+            revid = m.group('after_tag')
         elif tag == 'title':
-            title = m.group(3)
+            title = m.group('after_tag')
         elif tag == 'redirect':
             redirect = True
         elif tag == 'text':
+            if 'templatestyles src=' in m['after_tag']:
+                continue
+
             inText = True
-            line = line[m.start(3):m.end(3)]
-            page.append(line)
-            if m.lastindex == 4:  # open-close
+
+            find = re.findall(r'#\w+\s', line)  # Matches lines starting with # followed by any word characters and then a space
+            if find:
+                special_chars = find[0]  # This gives you the special chars at the beginning, if needed
+                remove_hyper_start = m.start('after_tag') + len(special_chars)
+                line = line[remove_hyper_start:m.end('after_tag')].strip()
+                page.append(line)
+            else:
+                line = line[m.start('after_tag'):m.end('after_tag')]
+                page.append(line)
+
+            if m.lastindex == 4:  # open-close (self-closing XML or HTML tag)
                 inText = False
         elif tag == '/text':
-            if m.group(1):
-                page.append(m.group(1))
+            if m.group('before_tag'):
+                page.append(m.group('before_tag'))
             inText = False
         elif inText:
             page.append(line)
@@ -353,6 +388,7 @@ def process_dump(input_file, template_file, out_file, file_size, file_compress,
 
     urlbase = ''                # This is obtained from <siteinfo>
 
+    # unzip if needed
     input = decode_open(input_file)
 
     # collect siteinfo
@@ -361,19 +397,20 @@ def process_dump(input_file, template_file, out_file, file_size, file_compress,
         m = tagRE.search(line)
         if not m:
             continue
-        tag = m.group(2)
+        tag = m.group('tag_name')
         if tag == 'base':
             # discover urlbase from the xml dump file
             # /mediawiki/siteinfo/base
-            base = m.group(3)
+            base = m.group('after_tag')
             urlbase = base[:base.rfind("/")]
         elif tag == 'namespace':
-            knownNamespaces.add(m.group(3))
-            if re.search('key="10"', line):
-                templateNamespace = m.group(3)
+            after_tag = m.group('after_tag')
+            knownNamespaces.add(after_tag)            
+            if re.search('key="10"', line):   # '10' is the key for the Template namespace in MediaWiki.
+                templateNamespace = after_tag
                 Extractor.templatePrefix = templateNamespace + ':'
-            elif re.search('key="828"', line):
-                moduleNamespace = m.group(3)
+            elif re.search('key="828"', line):   # '828' is the key for the Module namespace in MediaWiki.
+                moduleNamespace = m.group('after_tag')
                 modulePrefix = moduleNamespace + ':'
         elif tag == '/siteinfo':
             break
@@ -536,7 +573,7 @@ def main():
     parser = argparse.ArgumentParser(prog=os.path.basename(sys.argv[0]),
                                      formatter_class=argparse.RawDescriptionHelpFormatter,
                                      description=__doc__)
-    parser.add_argument("input",
+    parser.add_argument("--input", default="/home/pphuc/wikiextractor/test.xml",
                         help="XML wiki dump file")
     groupO = parser.add_argument_group('Output')
     groupO.add_argument("-o", "--output", default="text",
@@ -571,7 +608,7 @@ def main():
                         help="suppress reporting progress info")
     groupS.add_argument("--debug", action="store_true",
                         help="print debug info")
-    groupS.add_argument("-a", "--article", action="store_true",
+    groupS.add_argument("-a", "--article", action="store_true", default=False,
                         help="analyze a file containing a single article (debug option)")
     groupS.add_argument("-v", "--version", action="version",
                         version='%(prog)s ' + __version__,
@@ -586,10 +623,12 @@ def main():
     Extractor.to_json = args.json
 
     try:
+        
+        # Check the input maximum bytes is K (Kilo), M (Mega) or G (Giga) and define power
         power = 'kmg'.find(args.bytes[-1].lower()) + 1
-        # 0 bytes means put a single article per file.
+        # Convert file size to bytes, 0 bytes means put a single article per file.
         file_size = 0 if args.bytes == '0' else int(args.bytes[:-1]) * 1024 ** power
-        if file_size and file_size < minFileSize:
+        if file_size and file_size < minFileSize: # check if file size is less than minimum size (200 KB)
             raise ValueError()
     except ValueError:
         logging.error('Insufficient or invalid size: %s', args.bytes)
@@ -616,7 +655,9 @@ def main():
     # manager = Manager()
     # templateCache = manager.dict()
 
+    # Enable single article for debugging
     if args.article:
+        # Load template
         if args.templates:
             if os.path.exists(args.templates):
                 with open(args.templates) as file:

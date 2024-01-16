@@ -32,6 +32,10 @@ import time
 # match tail after wikilink
 tailRE = re.compile('\w+')
 syntaxhighlight = re.compile('&lt;syntaxhighlight .*?&gt;(.*?)&lt;/syntaxhighlight&gt;', re.DOTALL)
+pattern_templateStype_error = r'&lt;templatestyles .*?/&gt;'
+
+def remove_newlines_and_strip(text):
+    return re.sub(r'^[ \n]+|[ \n]+$', '', text)
 
 ## PARAMS ####################################################################
 
@@ -65,8 +69,7 @@ def get_url(urlbase, uid):
 
 
 # ======================================================================
-
-
+# TODO: Review this function
 def clean(extractor, text, expand_templates=False, html_safe=True):
     """
     Transforms wiki markup. If the command line flag --escapedoc is set then the text is also escaped
@@ -122,6 +125,10 @@ def clean(extractor, text, expand_templates=False, html_safe=True):
         text = quote_quote.sub(r'"\1"', text)
     # residuals of unbalanced quotes
     text = text.replace("'''", '').replace("''", '"')
+    pattern = r'#+(đổi|ĐỔI)'
+    text = re.sub(pattern, '', text)
+    
+    text = remove_newlines_and_strip(text)
 
     # Collect spans
 
@@ -174,6 +181,7 @@ def clean(extractor, text, expand_templates=False, html_safe=True):
     text = text.replace(',,', ',').replace(',.', '.')
     if html_safe:
         text = html.escape(text, quote=False)
+    text = re.sub(pattern_templateStype_error, '', text)
     return text
 
 
@@ -185,7 +193,7 @@ listClose = {'*': '</ul>', '#': '</ol>', ';': '</dl>', ':': '</dl>'}
 listItem = {'*': '<li>%s</li>', '#': '<li>%s</<li>', ';': '<dt>%s</dt>',
             ':': '<dd>%s</dd>'}
 
-
+# TODO: Review this function
 def compact(text, mark_headers=False):
     """Deal with headers, lists, empty sections, residuals of tables.
     :param text: convert to HTML
@@ -259,7 +267,21 @@ def compact(text, mark_headers=False):
                     line = line[l:].strip()
                 page.append(listItem[type] % line)
             else:
-                continue
+                # continue
+
+                # Extract list character and content using regex
+                match = re.match(r'^[#\*;]+', line)
+
+                special_chars = match.group(0)  # This gives you the special chars at the beginning, if needed
+                content = line[len(special_chars):].strip()
+                
+                # Append only if content exists
+                if content:
+                    page.append(f"- {content.strip()}")
+                else:
+                    continue
+
+
         elif len(listLevel):    # implies Extractor.HtmlFormatting
             for c in reversed(listLevel):
                 page.append(listClose[c])
@@ -277,10 +299,10 @@ def compact(text, mark_headers=False):
                 for (i, v) in items:
                     page.append(v)
             headers.clear()
-            page.append(line)  # first line
+            page.append(line.strip())  # first line
             emptySection = False
         elif not emptySection:
-            page.append(line)
+            page.append(line.strip())
             # dangerous
             # # Drop preformatted
             # elif line[0] == ' ':
@@ -982,7 +1004,7 @@ class Extractor():
                 'title': self.title,
                 'text': "\n".join(text)
             }
-            out_str = json.dumps(json_data)
+            out_str = json.dumps(json_data, ensure_ascii=False)
             out.write(out_str)
             out.write('\n')
         else:
