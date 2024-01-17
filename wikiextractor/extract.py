@@ -226,7 +226,7 @@ def compact(text, mark_headers=False):
             if mark_headers:
                 title = "## " + title
 
-            headers[lev] = title
+            headers[lev] = line # headers[lev] = title -> drop header marker (==, ===)
             # drop previous headers
             headers = { k:v for k,v in headers.items() if k <= lev }
             emptySection = True
