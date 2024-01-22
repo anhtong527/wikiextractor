@@ -218,6 +218,8 @@ def compact(text, mark_headers=False):
         if m:
             title = m.group(2)
             lev = len(m.group(1))
+	    if title.lower() in ["xem thêm", "chú thích", "tham khảo"]:
+		break
             if Extractor.HtmlFormatting:
                 page.append("<h%d>%s</h%d>" % (lev, title, lev))
             if title and title[-1] not in '!?':
