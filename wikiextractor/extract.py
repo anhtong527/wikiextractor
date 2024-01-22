@@ -218,7 +218,8 @@ def compact(text, mark_headers=False):
         if m:
             title = m.group(2)
             lev = len(m.group(1))
-            if title.lower() in ["xem thêm", "chú thích", "tham khảo"]:
+            if title.lower() in ["xem thêm", "chú thích", "tham khảo", "liên kết ngoài", \
+                                 "see also", "notes", "references", "notes and references", "further reading", "external links"]:
                 break
             if Extractor.HtmlFormatting:
                 page.append("<h%d>%s</h%d>" % (lev, title, lev))
@@ -232,6 +233,13 @@ def compact(text, mark_headers=False):
             # drop previous headers
             headers = { k:v for k,v in headers.items() if k <= lev }
             emptySection = True
+            if Extractor.keepSections:
+                items = sorted(headers.items())
+                for (i, v) in items:
+                    page.append(v)
+            headers.clear()
+            page.append(line.strip())  # first line
+            emptySection = False
             continue
         # Handle page title
         if line.startswith('++'):
@@ -295,14 +303,14 @@ def compact(text, mark_headers=False):
         # Drop irrelevant lines
         elif (line[0] == '(' and line[-1] == ')') or line.strip('.-') == '':
             continue
-        elif len(headers):
-            if Extractor.keepSections:
-                items = sorted(headers.items())
-                for (i, v) in items:
-                    page.append(v)
-            headers.clear()
-            page.append(line.strip())  # first line
-            emptySection = False
+        # elif len(headers):
+        #     if Extractor.keepSections:
+        #         items = sorted(headers.items())
+        #         for (i, v) in items:
+        #             page.append(v)
+        #     headers.clear()
+        #     page.append(line.strip())  # first line
+        #     emptySection = False
         elif not emptySection:
             page.append(line.strip())
             # dangerous
